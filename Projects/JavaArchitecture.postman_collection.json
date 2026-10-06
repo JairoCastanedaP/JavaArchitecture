@@ -1,0 +1,45 @@
+{
+	"info": {
+		"_postman_id": "fed04c75-d46e-48e9-a1d3-844486c479fa",
+		"name": "JavaArchitecture",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "49806094",
+		"_collection_link": "https://jairocastaneda-763608.postman.co/workspace/Jairo's-Workspace~426cabc7-9f72-40ac-8b5a-45610df72ed2/collection/49806094-fed04c75-d46e-48e9-a1d3-844486c479fa?action=share&source=collection_link&creator=49806094"
+	},
+	"item": [
+		{
+			"name": "Layered - app1",
+			"item": [
+				{
+					"name": "getAllCustomers",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8081/api/v1/customers",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "8081",
+							"path": [
+								"api",
+								"v1",
+								"customers"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "New Request",
+					"request": {
+						"method": "GET",
+						"header": []
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}
