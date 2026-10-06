@@ -1,0 +1,23 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: app-demo-v1
+  datasource:
+    url: jdbc:h2:mem:db_claims
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: false
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    defer-datasource-initialization: true
+    show-sql: true
