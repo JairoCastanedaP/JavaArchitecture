@@ -1,0 +1,14 @@
+DOCKER
+Levanta el contenedor MySQL
+
+docker run -d \
+  --name mysql-layered-v2 \
+  -e MYSQL_ROOT_PASSWORD=123456 \
+  -e MYSQL_DATABASE=db_claims \
+  -p 3308:3306 \
+  -v mysql_layered_v2_data:/var/lib/mysql \
+  mysql:8.4
+
+
+ docker ps
+ docker logs -f mysql-layered-v2
