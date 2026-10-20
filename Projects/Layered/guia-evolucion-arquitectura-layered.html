@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Guía de evolución: arquitectura layered</title>
+<style>
+@page{size:A4;margin:18mm}body{font-family:Calibri,Arial,sans-serif;color:#243247;max-width:980px;margin:32px auto;padding:0 28px;line-height:1.55;font-size:15px}h1{color:#123b5d;font-size:30px;border-bottom:3px solid #2b7a78;padding-bottom:10px;margin-bottom:20px}h2{color:#155e75;font-size:23px;margin-top:34px;border-bottom:1px solid #cbd5e1;padding-bottom:6px}h3{color:#334e68;font-size:18px;margin-top:24px}p{margin:10px 0}strong{color:#123b5d}ul,ol{padding-left:28px}li{margin:6px 0}table{border-collapse:collapse;width:100%;margin:18px 0;font-size:14px;break-inside:avoid}th{background:#155e75;color:#fff;text-align:left}th,td{border:1px solid #cbd5e1;padding:9px;vertical-align:top}tr:nth-child(even){background:#f1f5f9}code{font-family:Consolas,monospace;background:#eef2f7;color:#7c2d12;padding:1px 4px;border-radius:3px}pre{white-space:pre-wrap;background:#f1f5f9;border-left:4px solid #2b7a78;padding:14px 18px;font:14px/1.5 Consolas,monospace;break-inside:avoid}hr{border:0;border-top:1px solid #cbd5e1;margin:24px 0}.tip{background:#eaf4f4;padding:12px 16px;border-left:4px solid #2b7a78;margin-bottom:24px}@media print{body{margin:0;padding:0;max-width:none}}
+</style></head><body>
+<div class="tip"><strong>Para llevarlo a OneNote:</strong> abre este archivo en el navegador, selecciona el contenido de la guía y cópialo; al pegarlo en OneNote se conservan los encabezados, las listas, las tablas y el bloque de flujo.</div>
+<h1>Guía de aprendizaje: evolución de la aplicación CRUD por versiones</h1>
+<h2>Cómo leer esta guía</h2>
+<p>La carpeta <code>02.-Use cases</code> contiene seis proyectos independientes: <code>app-demo-v1</code>, <code>app-demo-v2</code>, <code>app-demo-v3</code>, <code>app-demo-v4.a</code>, <code>app-demo-v4.b</code> y <code>app-demo-v5.a</code>. Cada uno es una instantánea de la aplicación, no un módulo de un solo Maven multi-módulo. Los <code>pom.xml</code> conservan una base parecida de Spring Boot, Java, Spring Web MVC, Spring Data JPA, validación, H2 y MySQL; la evolución más importante ocurre en el código y en la organización de paquetes.</p>
+<p>La secuencia pedagógica que se desprende del código es: <strong>hacer funcionar el CRUD → separar responsabilidades → separar el contrato HTTP del modelo persistente → ampliar a otro dominio → organizar por dominio → reutilizar lo común</strong>.</p>
+<h2>Vista rápida</h2>
+<table><thead><tr><th>Versión</th><th>Cambio que enseña</th><th>Flujo principal</th></tr></thead><tbody>
+<tr><td>v1</td><td>CRUD mínimo y persistencia con Spring Data JPA</td><td>Controller → Repository → Entity</td></tr>
+<tr><td>v2</td><td>Capa de servicio e interfaz</td><td>Controller → Service → Repository → Entity</td></tr>
+<tr><td>v3</td><td>DTOs, validación, MapStruct, reglas y excepciones</td><td>Controller → DTO → Service → Mapper/Repository → Entity</td></tr>
+<tr><td>v4.a</td><td>Segundo caso de uso: Supplier, conservando paquetes por capa</td><td>Controller → Service → Mapper/Repository → Entity, para Customer y Supplier</td></tr>
+<tr><td>v4.b</td><td>Reorganización por dominio: <code>customer</code> y <code>supplier</code></td><td>Mismo flujo, con cada dominio agrupando sus componentes</td></tr>
+<tr><td>v5.a</td><td>Abstracciones genéricas, entidad/auditoría comunes y respuestas reutilizables</td><td>API de dominio → Service genérico → Repository genérico; mapeo y persistencia específicos</td></tr>
+</tbody></table>
+<h2>v1 — CRUD directo: descubrir el recorrido de una petición</h2>
+<p><strong>Propósito.</strong> Construir primero una API pequeña para clientes y comprobar cómo Spring MVC y Spring Data JPA resuelven un CRUD básico.</p>
+<p><strong>Clases clave.</strong> <code>controller/CustomerController.java</code> declara <code>GET /api/v1/customers</code>, <code>POST /api/v1/customers</code> y <code>PUT /api/v1/customers/{id}</code>. Inyecta directamente <code>CustomerRepository</code>. <code>repository/CustomerRepository.java</code> extiende <code>JpaRepository&lt;CustomerEntity, Long&gt;</code>, que proporciona operaciones CRUD. <code>entity/CustomerEntity.java</code> representa tanto la fila JPA (<code>customers</code>) como, en la práctica, el objeto recibido o devuelto por HTTP.</p>
+<p><strong>Flujo y decisión arquitectónica.</strong> La petición entra al controlador, este llama al repositorio y retorna la entidad. En la actualización el controlador busca el registro, cambia sus campos y guarda. Todavía no hay una capa de servicio: el controlador mezcla transporte HTTP, coordinación y parte de la lógica.</p>
+<p><strong>Conceptos aprendidos.</strong> Anotaciones REST (<code>@RestController</code>, <code>@RequestMapping</code>, <code>@GetMapping</code>, etc.), <code>ResponseEntity</code>, inyección por constructor, entidades JPA, repositorios Spring Data y códigos HTTP básicos (por ejemplo, creación con <code>201 Created</code>). La configuración contempla H2 y MySQL mediante recursos de aplicación.</p>
+<p><strong>Límite que motiva v2.</strong> Si las reglas de negocio se agregan al controlador, este deja de ser una frontera HTTP sencilla y la misma lógica no se puede reutilizar con facilidad.</p>
+<h2>v2 — Servicio: mover la lógica fuera del controlador</h2>
+<p><strong>Qué cambia.</strong> Se agregan <code>service/CustomerService.java</code> y <code>service/CustomerServiceImpl.java</code>. El controlador deja de inyectar el repositorio y pasa a depender de la interfaz <code>CustomerService</code>. La implementación del servicio coordina el acceso al repositorio y concentra <code>getAll</code>, <code>getById</code>, <code>save</code> y <code>update</code>.</p>
+<p><strong>Flujo.</strong> HTTP → <code>CustomerController</code> → <code>CustomerService</code> → <code>CustomerRepository</code> → <code>CustomerEntity</code> → base de datos. La respuesta aún usa <code>CustomerEntity</code>, por lo que la frontera HTTP sigue expuesta al modelo de persistencia.</p>
+<p><strong>Conceptos aprendidos.</strong> Separación de responsabilidades, interfaz frente a implementación, servicio de aplicación y dependencias por constructor. El servicio es el lugar natural para reglas que requieren más que una llamada de persistencia.</p>
+<p><strong>Límite que motiva v3.</strong> El controlador y el cliente HTTP todavía intercambian la entidad JPA; también hace falta tratar validación y errores de forma coherente.</p>
+<h2>v3 — Contratos HTTP, validación, mapeo y errores</h2>
+<p><strong>Qué cambia.</strong> La API adopta <code>CustomerRequestDto</code> y <code>CustomerResponseDto</code> en <code>dto/</code>, usa <code>@Valid</code> en las entradas, y el contrato de servicio pasa a recibir y devolver DTOs. <code>mapper/CustomerMapper.java</code> declara conversiones entre DTO y entidad con MapStruct (<code>@Mapper(componentModel = "spring")</code>). El <code>pom.xml</code> incorpora MapStruct y configuración de procesadores de anotaciones junto con Lombok.</p>
+<p><code>CustomerServiceImpl</code> incorpora reglas de negocio: busca duplicados por nombre, comprueba existencia antes de modificar o borrar y realiza borrado lógico mediante <code>swDelete</code>. <code>CustomerException</code> expresa errores del dominio y <code>GlobalException</code> (<code>@RestControllerAdvice</code>) convierte errores de validación y de negocio en respuestas HTTP centralizadas. El repositorio expone búsqueda por nombre.</p>
+<p><strong>Flujo de escritura.</strong> JSON → <code>CustomerRequestDto</code> → validación automática → Controller → Service (reglas) → Mapper a <code>CustomerEntity</code> → Repository → base de datos. En lectura se realiza el camino inverso y se devuelve <code>CustomerResponseDto</code>.</p>
+<p><strong>Conceptos aprendidos.</strong> DTO como contrato independiente, validación declarativa, mapeo explícito, manejo global de excepciones, reglas de negocio en servicio, y diferencia entre borrado físico y lógico. Las rutas completan el CRUD con <code>DELETE</code>.</p>
+<p><strong>Nota al estudiar el código.</strong> Los nombres de clases y métodos son más fiables que asumir que cada detalle está terminado: por ejemplo, conviene revisar la definición de búsqueda por nombre del repositorio porque en v3 aparecen dos declaraciones con la misma firma. El ejemplo es útil para entender la intención de arquitectura, aunque esa duplicación requiere resolverla antes de tratar la versión como una implementación limpia.</p>
+<h2>v4.a — Extender el patrón a Supplier</h2>
+<p><strong>Qué cambia.</strong> Se añade el dominio <code>Supplier</code> además de <code>Customer</code>, con entidades, DTOs, controladores, servicios, repositorios, mappers y excepciones para ambos. Los componentes se organizan principalmente por capa: <code>controller/</code>, <code>service/</code>, <code>repository/</code>, <code>entity/</code>, <code>dto/</code>, <code>mapper/</code>. Cada dominio tiene sus propias reglas (por ejemplo, nombre de cliente frente a nombre de empresa) y sus rutas.</p>
+<p><strong>Flujo.</strong> Sigue el diseño de v3: Controller → Service → Mapper/Repository → Entity. La duplicación entre los dos CRUD se vuelve visible: los servicios repiten operaciones de listar, buscar, guardar, actualizar y borrar; los DTOs y mappers siguen siendo específicos.</p>
+<p><strong>Conceptos aprendidos.</strong> Generalizar un patrón probado a un segundo caso de uso permite descubrir qué partes son genuinamente comunes y cuáles pertenecen a cada negocio. Añadir una entidad no significa que se deban combinar reglas o contratos.</p>
+<p><strong>Límite que motiva v4.b.</strong> En una estructura por capas, encontrar todo lo relativo a un dominio requiere saltar entre varios paquetes.</p>
+<h2>v4.b — Organización por dominio o feature</h2>
+<p><strong>Qué cambia.</strong> La estructura agrupa las clases de cada caso de uso bajo <code>customer/</code> y <code>supplier/</code>; dentro de cada paquete aparecen sus controladores, servicios, entidades, DTOs, repositorios, mappers y excepciones. Las preocupaciones compartidas (por ejemplo, <code>exceptions/GlobalException</code>) permanecen en un ámbito común.</p>
+<p><strong>Flujo y comportamiento.</strong> La lógica de negocio es esencialmente la de v4.a. Este paso se entiende sobre todo como una reorganización del código, no como una nueva capa ni como un cambio del recorrido HTTP a base de datos.</p>
+<p><strong>Conceptos aprendidos.</strong> Organización por dominio (también llamada por feature o paquete vertical), cohesión y facilidad para localizar/modificar una funcionalidad completa. Se compara con la organización horizontal por capa de v4.a.</p>
+<p><strong>Cómo elegir entre v4.a y v4.b.</strong> La organización por capas ayuda a comparar implementaciones del mismo tipo técnico; la organización por dominio reúne lo que cambia junto cuando se modifica un caso de uso. La versión no es una arquitectura distinta en runtime: es una decisión de estructura del código.</p>
+<h2>v5.a — Reutilización genérica y datos comunes</h2>
+<p><strong>Qué cambia.</strong> Conserva Customer y Supplier, ahora organizados bajo <code>business/</code>, y agrega el espacio <code>generic/</code> para contratos reutilizables:</p>
+<ul>
+<li><code>generic/service/GenericService&lt;T,R,ID&gt;</code> declara operaciones CRUD comunes.</li>
+<li><code>generic/repository/GenericRepository&lt;T,ID&gt;</code> extiende <code>JpaRepository</code> y usa <code>@NoRepositoryBean</code> para evitar que Spring cree un repositorio concreto para la interfaz base.</li>
+<li><code>generic/mapper/GenericMapper&lt;E,REQ,RES&gt;</code> establece conversiones comunes; <code>CustomerMapper</code> y <code>SupplierMapper</code> especializan los tipos.</li>
+<li><code>generic/entity/GenericEntity</code> concentra estado, borrado lógico y campos de auditoría; las entidades de negocio heredan de ella.</li>
+<li><code>generic/dto/GenericResponseDto</code> y <code>AuditResponseDto</code> ofrecen datos comunes de respuesta.</li>
+<li><code>generic/exceptions/GenericException</code> sirve como supertipo para excepciones específicas.</li>
+</ul>
+<p>Los repositorios de negocio agregan sus consultas específicas (por ejemplo <code>findByName</code> y <code>findByCompanyName</code>); los servicios mantienen validaciones y reglas propias del dominio. El <code>pom.xml</code> mantiene MapStruct y añade las dependencias asociadas a la persistencia/auditoría.</p>
+<p><strong>Flujo.</strong> La API de cada dominio recibe su DTO y delega en el servicio específico. El servicio aplica sus reglas, usa el mapper del dominio y un repositorio que hereda el CRUD genérico. La entidad hereda campos transversales y se persiste; el mapper proyecta respuesta y auditoría.</p>
+<p><strong>Conceptos aprendidos.</strong> Reutilización mediante genéricos, plantilla de operaciones comunes, superclase JPA con <code>@MappedSuperclass</code>, auditoría, y separación de lo común (generic) de las variaciones de negocio (business).</p>
+<p><strong>Lo que el código sugiere que falta revisar.</strong> <code>GenericController</code> está vacío y solo el controlador de clientes lo extiende; no parece existir una abstracción de controlador CRUD completa. <code>SupplierServiceImpl.findByDocumentNumber</code> devuelve <code>null</code>, aunque existe en la interfaz, y los métodos de consulta genéricos no filtran automáticamente registros con <code>swDelete = "0"</code>. La clase de auditoría tiene <code>@EntityListeners</code>, pero para que los campos automáticos se rellenen también debe estar habilitada la configuración de JPA auditing y debe existir una fuente de usuario si se espera completar <code>@CreatedBy</code>/<code>@LastModifiedBy</code>; hay que verificar esa configuración en el proyecto antes de asumir ese comportamiento. Así, v5.a demuestra la dirección de reutilización, pero no todas las abstracciones parecen acabadas.</p>
+<h2>Un recorrido concreto: crear un cliente</h2>
+<ol>
+<li>En v1, el controlador recibe <code>CustomerEntity</code> y la guarda directamente.</li>
+<li>En v2, recibe la entidad pero delega el caso de uso en <code>CustomerService</code>.</li>
+<li>En v3, recibe un DTO validado; el servicio comprueba duplicados; MapStruct lo convierte en entidad; el repositorio persiste; el servicio convierte el resultado a DTO de salida.</li>
+<li>En v4.a, la misma secuencia existe para Customer y Supplier, con paquetes por capa.</li>
+<li>En v4.b, la misma secuencia se encuentra bajo los paquetes de cada dominio.</li>
+<li>En v5.a, las operaciones comunes se expresan en interfaces genéricas y los campos transversales se heredan, mientras las consultas y reglas siguen siendo propias de cada dominio.</li>
+</ol>
+<h2>Mapa mental final</h2>
+<pre><code>Cliente HTTP
+    ↓ JSON / ruta
+Controller (adaptador web: protocolo y estado HTTP)
+    ↓ DTO
+Service (caso de uso: reglas y coordinación)
+    ├── Mapper (DTO ↔ Entity)
+    └── Repository (persistencia)
+             ↓
+          Entity → Base de datos</code></pre>
+<p>El aprendizaje acumulativo es separar responsabilidades sin perder de vista el recorrido de una solicitud. DTOs aíslan la API de JPA; los servicios aíslan los casos de uso de HTTP; la organización por dominio mejora la cohesión del código; los componentes genéricos reducen repetición cuando de verdad existe comportamiento común. Las reglas particulares —unicidad, búsquedas específicas, validaciones propias— deben seguir visibles en su dominio.</p>
+<h2>Qué mirar en los <code>pom.xml</code> y recursos</h2>
+<p>En todas las versiones, <code>pom.xml</code> muestra la base de ejecución: Spring Web MVC para la API, Spring Data JPA y el controlador H2/MySQL para persistencia, y Java 25 declarado. A partir de v3 aparece MapStruct y su procesamiento de anotaciones. En las versiones posteriores hay recursos <code>application-h2.yaml</code>, <code>application-mysql.yml</code> y <code>data.sql</code>, que permiten ver configuración y datos iniciales. Estos archivos explican el entorno de ejecución; no cambian por sí solos las capas de la arquitectura.</p>
+<h2>Orden recomendado para repasar</h2>
+<ol>
+<li>Lee <code>CustomerController</code> de v1 y sigue la llamada hasta <code>CustomerRepository</code>.</li>
+<li>Compara los mismos archivos en v2 e identifica qué código se movió al servicio.</li>
+<li>En v3, sigue un <code>POST</code> desde <code>CustomerRequestDto</code> hasta <code>CustomerEntity</code> y de vuelta a <code>CustomerResponseDto</code>; después mira validación y <code>GlobalException</code>.</li>
+<li>Compara el árbol de paquetes de v4.a con v4.b, sin confundir cambio de ubicación con cambio de comportamiento.</li>
+<li>En v5.a, empieza por <code>GenericService</code>, <code>GenericRepository</code>, <code>GenericMapper</code> y <code>GenericEntity</code>; luego rastrea qué queda específico en Customer y Supplier.</li>
+<li>Para cerrar, anota diferencias entre intención y código implementado, en particular consultas duplicadas/no implementadas y auditoría.</li>
+</ol>
+</body></html>
