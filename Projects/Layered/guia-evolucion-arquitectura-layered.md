@@ -2,9 +2,9 @@
 
 ## Cómo leer esta guía
 
-La carpeta `02.-Use cases` contiene seis proyectos independientes: `app-demo-v1`, `app-demo-v2`, `app-demo-v3`, `app-demo-v4.a`, `app-demo-v4.b` y `app-demo-v5.a`. Cada uno es una instantánea de la aplicación, no un módulo de un solo Maven multi-módulo. Los `pom.xml` conservan una base parecida de Spring Boot, Java, Spring Web MVC, Spring Data JPA, validación, H2 y MySQL; la evolución más importante ocurre en el código y en la organización de paquetes.
+La carpeta reúne ocho proyectos independientes: `app-demo-v1`, `app-demo-v2`, `app-demo-v3`, `app-demo-v4.a`, `app-demo-v4.b`, `app-demo-v5.a`, `app-demo-v5.b` y `app-demo-v5.c`. Cada uno es una instantánea de la aplicación, no un módulo de un proyecto Maven multi-módulo. Los `pom.xml` conservan una base parecida de Spring Boot, Java, Spring Web MVC, Spring Data JPA, validación, H2 y MySQL; la evolución más importante ocurre en el código y en la organización de paquetes.
 
-La secuencia pedagógica que se desprende del código es: **hacer funcionar el CRUD → separar responsabilidades → separar el contrato HTTP del modelo persistente → ampliar a otro dominio → organizar por dominio → reutilizar lo común**.
+La secuencia pedagógica que se desprende del código es: **hacer funcionar el CRUD → separar responsabilidades → separar el contrato HTTP del modelo persistente → ampliar a otro dominio → organizar por dominio → reutilizar lo común → formalizar contratos y errores → consolidar paquetes verticales y respuestas comunes**.
 
 ## Vista rápida
 
@@ -15,7 +15,9 @@ La secuencia pedagógica que se desprende del código es: **hacer funcionar el C
 | v3 | DTOs, validación, MapStruct, reglas y excepciones | Controller → DTO → Service → Mapper/Repository → Entity |
 | v4.a | Segundo caso de uso: Supplier, conservando paquetes por capa | Controller → Service → Mapper/Repository → Entity, para Customer y Supplier |
 | v4.b | Reorganización por dominio: `customer` y `supplier` | Mismo flujo, con cada dominio agrupando sus componentes |
-| v5.a | Abstracciones genéricas, entidad/auditoría comunes y respuestas reutilizables | API de dominio → Service genérico → Repository genérico; mapeo y persistencia específicos |
+| v5.a | Primeros contratos genéricos, entidad/auditoría comunes y respuestas reutilizables | Controller de dominio → Service de dominio → Repository genérico; mapeo y persistencia específicos |
+| v5.b | Contrato genérico para controladores, rutas centralizadas y excepciones por tipo | Controller → Service → Repository; duplicados y no encontrados obtienen HTTP 409/404 |
+| v5.c | Paquetes verticales para Customer/Supplier y helper común de respuesta de creación | Mismo flujo de v5.b, con componentes agrupados por dominio y responsabilidades compartidas en `shared/` |
 
 ## v1 — CRUD directo: descubrir el recorrido de una petición
 
@@ -88,7 +90,37 @@ Los repositorios de negocio agregan sus consultas específicas (por ejemplo `fin
 
 **Conceptos aprendidos.** Reutilización mediante genéricos, plantilla de operaciones comunes, superclase JPA con `@MappedSuperclass`, auditoría, y separación de lo común (generic) de las variaciones de negocio (business).
 
-**Lo que el código sugiere que falta revisar.** `GenericController` está vacío y solo el controlador de clientes lo extiende; no parece existir una abstracción de controlador CRUD completa. `SupplierServiceImpl.findByDocumentNumber` devuelve `null`, aunque existe en la interfaz, y los métodos de consulta genéricos no filtran automáticamente registros con `swDelete = "0"`. La clase de auditoría tiene `@EntityListeners`, pero para que los campos automáticos se rellenen también debe estar habilitada la configuración de JPA auditing y debe existir una fuente de usuario si se espera completar `@CreatedBy`/`@LastModifiedBy`; hay que verificar esa configuración en el proyecto antes de asumir ese comportamiento. Así, v5.a demuestra la dirección de reutilización, pero no todas las abstracciones parecen acabadas.
+**Lo que en esta instantánea todavía falta revisar.** `GenericController` está vacío y solo el controlador de clientes lo extiende; no parece existir una abstracción de controlador CRUD completa. `SupplierServiceImpl.findByDocumentNumber` devuelve `null`, aunque existe en la interfaz, y los métodos de consulta genéricos no filtran automáticamente registros con `swDelete = "0"`. La clase de auditoría tiene `@EntityListeners`, pero para que los campos automáticos se rellenen también debe estar habilitada la configuración de JPA auditing y debe existir una fuente de usuario si se espera completar `@CreatedBy`/`@LastModifiedBy`; hay que verificar esa configuración en el proyecto antes de asumir ese comportamiento. Así, v5.a demuestra la dirección de reutilización, pero no todas las abstracciones parecen acabadas.
+
+## v5.b — Contrato genérico de controlador y errores HTTP tipados
+
+**Qué cambia respecto a v5.a.** Se formaliza la interfaz `generic/controller/GenericController<REQ,RES,ID>`, que declara las operaciones HTTP comunes `findAll`, `save`, `update` y `delete`. `CustomerController` y `SupplierController` especializan ese contrato con sus DTOs e identificador; sus implementaciones siguen llamando a servicios específicos y conservan las rutas propias. `APIEndPoints` centraliza las rutas base de clientes y proveedores.
+
+La jerarquía de errores también se refina. `DuplicateException` y `NotFoundException` extienden `GenericException`; `CustomerDuplicateException`, `SupplierDuplicateException`, `CustomerNotFoundException` y `SupplierNotFoundException` representan los casos concretos. `GlobalException` traduce validación y errores genéricos a `400 Bad Request`, duplicados a `409 Conflict` y recursos inexistentes a `404 Not Found`.
+
+En el dominio Supplier ya está implementada la búsqueda por número de documento: `SupplierRepository.findByDocumentNumber`, `SupplierServiceImpl.findByDocumentNumber` y la ruta declarada en `SupplierController`. El servicio además comprueba duplicidad de nombre de empresa y número de documento al crear y actualizar. El `pom.xml` fija `maven-compiler-plugin` 3.13.0 y declara procesadores de Lombok, `lombok-mapstruct-binding` y MapStruct, como parte de la configuración de compilación.
+
+**Qué se aprende.** Se avanza desde la reutilización de servicios/repositorios de v5.a hacia un contrato común de la capa web, se evita repetir la forma de declarar operaciones CRUD y se comunica la naturaleza del error con códigos HTTP adecuados.
+
+**Lo que aún es parcial.** `GenericControllerImpl` sigue vacío en 5.b: el contrato está genérico, pero las implementaciones concretas todavía contienen la lógica de respuesta. Además, el contrato genérico no declara `findById`, aunque los servicios ofrecen esa operación; la consulta adicional de Supplier permanece específica de ese dominio. La generalización está en progreso, no sustituye toda la implementación concreta.
+
+## v5.c — Paquetes verticales y responsabilidades compartidas
+
+**Qué cambia respecto a v5.b.** El código del negocio se reorganiza de los paquetes horizontales `business/controller`, `business/dto`, `business/service`, etc. a dos módulos por funcionalidad: `business/customer/` y `business/supplier/`. Dentro de cada uno se encuentran sus controladores, DTOs, entidades, excepciones, mappers, repositorios y servicios; las implementaciones concretas se ubican bajo `service/impl` y, para Supplier, `controller/impl`. Lo que cruza ambos dominios pasa a `business/shared/`, donde están `constants/APIEndPoints` y `exceptions/GlobalException`. Los contratos y clases reutilizables permanecen bajo `generic/`.
+
+`APIEndPoints` ahora expresa `API_VERSION` por separado y construye a partir de esa constante las rutas `/api/v1/customers` y `/api/v1/suppliers`. `GenericControllerImpl` deja de estar vacío y aporta `returnSave(path, msg, id)`, que arma la respuesta `201 Created` y el cuerpo con el identificador. `CustomerControllerImpl` usa ese método común. La implementación de Supplier aún arma directamente su respuesta de creación, por lo que la extracción no se aplica de forma uniforme.
+
+**Flujo y comportamiento.** Las reglas de negocio y el recorrido HTTP → servicio → repositorio no cambian sustancialmente respecto a v5.b. El avance principal es de cohesión y ubicación: cada funcionalidad puede recorrerse dentro de su propio paquete, mientras las políticas transversales se mantienen en `shared` o `generic`.
+
+**Qué se aprende.** La organización vertical reúne las clases que suelen cambiar juntas. También se ve una primera extracción de lógica de respuesta HTTP común, y la diferencia entre tener una interfaz genérica (v5.b) y empezar a reutilizar comportamiento en una clase base (v5.c).
+
+**Qué revisar.** `GenericControllerImpl` sigue siendo solo un helper y no implementa las operaciones CRUD completas; `GenericController` sigue sin definir búsqueda por ID. La reutilización de `returnSave` aparece aplicada al controlador de Customer, pero no al de Supplier. Es útil leerlo como una etapa de consolidación gradual, todavía con cierta duplicación.
+
+## Cómo se encadenan v5.a, v5.b y v5.c
+
+1. **v5.a:** abstrae contratos de servicio, repositorio y mapper, además de campos transversales de entidad y respuesta.
+2. **v5.b:** lleva la idea genérica a la interfaz del controlador y tipa excepciones para convertir duplicados y no encontrados en `409` y `404`.
+3. **v5.c:** conserva ese diseño, organiza código en `customer/`, `supplier/` y `shared/`, y comienza a reutilizar el formato de respuesta de creación.
 
 ## Un recorrido concreto: crear un cliente
 
@@ -98,6 +130,8 @@ Los repositorios de negocio agregan sus consultas específicas (por ejemplo `fin
 4. En v4.a, la misma secuencia existe para Customer y Supplier, con paquetes por capa.
 5. En v4.b, la misma secuencia se encuentra bajo los paquetes de cada dominio.
 6. En v5.a, las operaciones comunes se expresan en interfaces genéricas y los campos transversales se heredan, mientras las consultas y reglas siguen siendo propias de cada dominio.
+7. En v5.b, sigue el contrato genérico del controlador y la ruta de excepción desde la regla de negocio hasta el estado HTTP.
+8. En v5.c, compara la ubicación de las mismas clases con v5.b y observa qué lógica se movió a `shared` o `generic`, y cuál sigue duplicada.
 
 ## Mapa mental final
 
@@ -126,4 +160,6 @@ En todas las versiones, `pom.xml` muestra la base de ejecución: Spring Web MVC 
 3. En v3, sigue un `POST` desde `CustomerRequestDto` hasta `CustomerEntity` y de vuelta a `CustomerResponseDto`; después mira validación y `GlobalException`.
 4. Compara el árbol de paquetes de v4.a con v4.b, sin confundir cambio de ubicación con cambio de comportamiento.
 5. En v5.a, empieza por `GenericService`, `GenericRepository`, `GenericMapper` y `GenericEntity`; luego rastrea qué queda específico en Customer y Supplier.
-6. Para cerrar, anota diferencias entre intención y código implementado, en particular consultas duplicadas/no implementadas y auditoría.
+6. En v5.b, sigue `GenericController`, `GlobalException` y la búsqueda Supplier por número de documento.
+7. En v5.c, compara los paquetes `business/customer`, `business/supplier` y `business/shared`, y rastrea `returnSave`.
+8. Para cerrar, anota diferencias entre intención y código implementado, como métodos comunes aún no extraídos, métodos específicos de dominio y el estado de la auditoría.
